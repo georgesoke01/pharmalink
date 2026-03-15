@@ -1,0 +1,95 @@
+# docker-compose.yml
+version: "3.9"
+
+services:
+
+  db:
+    image: postgis/postgis:15-3.4
+    environment:
+      POSTGRES_DB: pharmalink
+      POSTGRES_USER: pharmalink
+      POSTGRES_PASSWORD: pharmalink_secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-prod
+      DB_NAME: pharmalink
+      DB_USER: pharmalink
+      DB_PASSWORD: pharmalink_secret
+      DB_HOST: db
+      REDIS_URL: redis://redis:6379/0
+
+  # Worker queue "high" — syncs manuelles déclenchées par les pharmaciens
+  celery-high:
+    build: .
+    command: celery -A config worker -l info -Q high -c 4 -n worker-high@%h
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-prod
+      DB_NAME: pharmalink
+      DB_USER: pharmalink
+      DB_PASSWORD: pharmalink_secret
+      DB_HOST: db
+      REDIS_URL: redis://redis:6379/0
+
+  # Worker queue "default" — syncs planifiées et nettoyages
+  celery-default:
+    build: .
+    command: celery -A config worker -l info -Q default -c 2 -n worker-default@%h
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-prod
+      DB_NAME: pharmalink
+      DB_USER: pharmalink
+      DB_PASSWORD: pharmalink_secret
+      DB_HOST: db
+      REDIS_URL: redis://redis:6379/0
+
+  celery-beat:
+    build: .
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-prod
+      DB_NAME: pharmalink
+      DB_USER: pharmalink
+      DB_PASSWORD: pharmalink_secret
+      DB_HOST: db
+      REDIS_URL: redis://redis:6379/0
+
+volumes:
+  postgres_data:
