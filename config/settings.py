@@ -16,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     # (type, valeur_par_défaut)
     DEBUG                   = (bool,  False),
-    ALLOWED_HOSTS           = (list,  ["127.0.0.1", "localhost"]),
+    ALLOWED_HOSTS           = (list,  ["127.0.0.1", "localhost", "flexible-lemur-strangely.ngrok-free.app"]),
     CORS_ALLOW_ALL_ORIGINS  = (bool,  False),
     CORS_ALLOWED_ORIGINS    = (list,  []),
     CORS_ALLOW_CREDENTIALS  = (bool,  False),
@@ -55,6 +55,7 @@ ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 USE_POSTGIS = env("USE_POSTGIS")
 
 INSTALLED_APPS = [
+    "jazzmin",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",

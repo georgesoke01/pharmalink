@@ -4,27 +4,22 @@ import time
 from celery import shared_task
 from django.utils import timezone
 
+# Imports au niveau module → patchables dans les tests
+from .pharmagest import ConnecteurPharmagest
+from .winpharma  import ConnecteurWinpharma
+
 logger = logging.getLogger(__name__)
+
+CONNECTEURS = {
+    "pharmagest": ConnecteurPharmagest,
+    "winpharma":  ConnecteurWinpharma,
+}
 
 
 @shared_task(bind=True, max_retries=3)
-def sync_pharmacie_lgo(self, pharmacie_id: int) -> dict:
-    """Synchronise une pharmacie avec son LGO.
-
-    Args:
-        pharmacie_id: ID de la pharmacie à synchroniser.
-
-    Returns:
-        Dictionnaire avec les stats de synchronisation.
-    """
+def sync_pharmacie_lgo(self, pharmacie_id: int, declenchement: str = "auto") -> dict:
+    """Synchronise une pharmacie avec son LGO."""
     from .models import ConnexionLGO, LogSync
-    from .pharmagest import ConnecteurPharmagest
-    from .winpharma import ConnecteurWinpharma
-
-    CONNECTEURS = {
-        "pharmagest": ConnecteurPharmagest,
-        "winpharma":  ConnecteurWinpharma,
-    }
 
     try:
         connexion = ConnexionLGO.objects.select_related("pharmacie").get(
@@ -43,11 +38,12 @@ def sync_pharmacie_lgo(self, pharmacie_id: int) -> dict:
     debut = time.time()
     try:
         connecteur = ConnecteurClass(connexion.config)
-        stats = connecteur.synchroniser(pharmacie_id)
+        stats      = connecteur.synchroniser(pharmacie_id, declenchement)
 
         LogSync.objects.create(
             connexion=connexion,
             resultat="succes" if not stats["erreurs"] else "partiel",
+            declenchement=declenchement,
             produits_sync=stats["produits"],
             stocks_sync=stats["stocks"],
             prix_sync=stats["prix"],
@@ -55,10 +51,7 @@ def sync_pharmacie_lgo(self, pharmacie_id: int) -> dict:
             message_erreur="\n".join(stats["erreurs"]),
         )
 
-        connexion.derniere_sync = timezone.now()
-        connexion.statut = "active"
-        connexion.save(update_fields=["derniere_sync", "statut"])
-
+        connexion.marquer_succes()
         logger.info(f"Sync OK — pharmacie {pharmacie_id} : {stats['produits']} produits")
         return {"status": "ok", **stats}
 
@@ -67,24 +60,18 @@ def sync_pharmacie_lgo(self, pharmacie_id: int) -> dict:
         LogSync.objects.create(
             connexion=connexion,
             resultat="echec",
+            declenchement=declenchement,
             duree_secondes=duree,
             message_erreur=str(exc),
         )
-        connexion.statut = "erreur"
-        connexion.save(update_fields=["statut"])
-
+        connexion.marquer_erreur(str(exc))
         logger.error(f"Sync ECHEC — pharmacie {pharmacie_id} : {exc}")
-        raise self.retry(exc=exc, countdown=300)   # retry dans 5 minutes
+        raise self.retry(exc=exc, countdown=300)
 
 
 @shared_task
 def sync_toutes_pharmacies() -> dict:
-    """Lance la synchronisation de toutes les pharmacies actives.
-
-    Planifiée toutes les 30 minutes via Celery Beat.
-    Chaque pharmacie est traitée dans une tâche indépendante (queue "high")
-    pour ne pas bloquer les autres en cas d'échec isolé.
-    """
+    """Lance la synchronisation de toutes les pharmacies actives (toutes les 30 min)."""
     from .models import ConnexionLGO
 
     connexions = ConnexionLGO.objects.filter(
@@ -94,10 +81,9 @@ def sync_toutes_pharmacies() -> dict:
     count = 0
     for pharmacie_id in connexions:
         sync_pharmacie_lgo.apply_async(
-            args=[pharmacie_id],
+            args=[pharmacie_id, "auto"],
             queue="high",
-            countdown=count * 2,   # échelonne les lancements (2s entre chaque)
-                                    # évite le thundering herd sur le broker Redis
+            countdown=count * 2,
         )
         count += 1
 
@@ -106,28 +92,62 @@ def sync_toutes_pharmacies() -> dict:
 
 
 @shared_task
+def mise_a_jour_statut_gardes() -> dict:
+    """Met à jour le statut des gardes toutes les 15 minutes."""
+    from apps.gardes.models import PeriodeGarde
+
+    maintenant = timezone.now()
+    stats      = {"activees": 0, "terminees": 0}
+
+    for garde in PeriodeGarde.objects.filter(
+        statut=PeriodeGarde.Statut.PLANIFIEE,
+        date_debut__lte=maintenant,
+        date_fin__gte=maintenant,
+    ).select_related("pharmacie"):
+        garde.activer()
+        stats["activees"] += 1
+        logger.info(f"Garde activée : {garde.pharmacie.nom}")
+
+    for garde in PeriodeGarde.objects.filter(
+        statut=PeriodeGarde.Statut.EN_COURS,
+        date_fin__lt=maintenant,
+    ).select_related("pharmacie"):
+        garde.terminer()
+        stats["terminees"] += 1
+        logger.info(f"Garde terminée : {garde.pharmacie.nom}")
+
+    logger.info(f"MAJ gardes — {stats['activees']} activée(s), {stats['terminees']} terminée(s)")
+    return stats
+
+
+@shared_task
+def mise_a_jour_statut_ouverture() -> dict:
+    """Met à jour est_ouverte de toutes les pharmacies actives toutes les 15 min."""
+    from apps.pharmacies.models import Pharmacie
+    from apps.horaires.models import est_ouverte_maintenant
+
+    pharmacies   = Pharmacie.objects.filter(statut="active")
+    mises_a_jour = 0
+
+    for pharmacie in pharmacies:
+        nouvelle_valeur = est_ouverte_maintenant(pharmacie)
+        if pharmacie.est_ouverte != nouvelle_valeur:
+            pharmacie.est_ouverte = nouvelle_valeur
+            pharmacie.save(update_fields=["est_ouverte"])
+            mises_a_jour += 1
+
+    logger.info(f"Ouverture MAJ — {mises_a_jour}/{pharmacies.count()} pharmacies modifiées")
+    return {"pharmacies_mises_a_jour": mises_a_jour, "total": pharmacies.count()}
+
+
+@shared_task
 def nettoyer_vieux_logs(jours_retention: int = 30) -> dict:
-    """Supprime les anciens logs de synchronisation LGO.
-
-    Planifiée chaque nuit à 2h via Celery Beat.
-    Évite la croissance infinie de la table LogSync en base.
-
-    Args:
-        jours_retention: Nombre de jours de logs à conserver. Défaut : 30.
-
-    Returns:
-        Dictionnaire avec le nombre de logs supprimés.
-    """
-    from django.utils import timezone
+    """Supprime les logs de sync de plus de jours_retention jours."""
     from datetime import timedelta
     from .models import LogSync
 
     date_limite = timezone.now() - timedelta(days=jours_retention)
-    qs = LogSync.objects.filter(date_sync__lt=date_limite)
-    count, _ = qs.delete()
+    count, _    = LogSync.objects.filter(date_sync__lt=date_limite).delete()
 
-    logger.info(
-        f"Nettoyage logs LGO — {count} entrées supprimées "
-        f"(antérieures au {date_limite.strftime('%Y-%m-%d')})"
-    )
+    logger.info(f"Nettoyage logs — {count} entrées supprimées (avant {date_limite.date()})")
     return {"logs_supprimes": count, "date_limite": str(date_limite.date())}

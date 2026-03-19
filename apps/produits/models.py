@@ -216,9 +216,12 @@ class Stock(models.Model):
 
     # ── Save : mise à jour automatique de disponible ──────────────────────────
     def save(self, *args, **kwargs):
-        """Passe disponible=False automatiquement si quantite=0."""
-        if self.quantite == 0:
-            self.disponible = False
+        """Synchronise disponible avec quantite automatiquement.
+
+        quantite == 0 → disponible = False
+        quantite  > 0 → disponible = True  (sauf surcharge manuelle explicite)
+        """
+        self.disponible = self.quantite > 0
         super().save(*args, **kwargs)
 
 

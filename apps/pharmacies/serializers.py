@@ -9,6 +9,9 @@ class PharmaciePublicSerializer(serializers.ModelSerializer):
     Données minimales pour l'affichage sur la carte.
     """
 
+    # DecimalField → float pour la carte React Native Maps
+    latitude     = serializers.FloatField(allow_null=True)
+    longitude    = serializers.FloatField(allow_null=True)
     coordonnees  = serializers.ReadOnlyField()
     est_active   = serializers.ReadOnlyField()
     pharmacien_nom = serializers.SerializerMethodField()
@@ -30,6 +33,9 @@ class PharmaciePublicSerializer(serializers.ModelSerializer):
 class PharmacieDetailSerializer(serializers.ModelSerializer):
     """Lecture détaillée — fiche complète d'une pharmacie (app mobile)."""
 
+    # DecimalField → float pour la carte React Native Maps
+    latitude       = serializers.FloatField(allow_null=True)
+    longitude      = serializers.FloatField(allow_null=True)
     coordonnees    = serializers.ReadOnlyField()
     est_active     = serializers.ReadOnlyField()
     pharmacien_nom = serializers.SerializerMethodField()
@@ -112,7 +118,9 @@ class PharmacieUpdateSerializer(serializers.ModelSerializer):
 class PharmacieAdminSerializer(serializers.ModelSerializer):
     """Serializer admin — vue complète avec statut modifiable."""
 
-    coordonnees  = serializers.ReadOnlyField()
+    latitude        = serializers.FloatField(allow_null=True)
+    longitude       = serializers.FloatField(allow_null=True)
+    coordonnees     = serializers.ReadOnlyField()
     pharmacien_info = serializers.SerializerMethodField()
 
     class Meta:

@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "PharmaLink",
+    "slug": "pharmalink-mobile",
+    "version": "1.0.0",
+    "scheme": "pharmalink",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#EFF3F0"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "bj.pharmalink.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "PharmaLink utilise votre position pour trouver les pharmacies proches."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A7A4A"
+      },
+      "package": "bj.pharmalink.app",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-location"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
